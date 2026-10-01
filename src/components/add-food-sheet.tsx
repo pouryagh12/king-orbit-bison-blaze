@@ -14,6 +14,7 @@ import {
   type FoodCategory,
 } from "@/lib/foods";
 import { scaleMacros } from "@/lib/nutrition";
+import { saveDay } from "@/lib/api";
 import { entryFromFood, useCalorieStore } from "@/lib/store";
 import { toFa } from "@/lib/utils";
 
@@ -34,16 +35,21 @@ type Props = {
 export function AddFoodSheet({ open, onOpenChange }: Props) {
   const addEntry = useCalorieStore((s) => s.addEntry);
   const recentFoodIds = useCalorieStore((s) => s.recentFoodIds);
+
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<FoodCategory | "all">("all");
   const [picked, setPicked] = useState<Food | null>(null);
   const [grams, setGrams] = useState(100);
   const [meal, setMeal] = useState<MealSlot>(defaultMealForNow);
   const [customOpen, setCustomOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
 
   const results = useMemo(() => {
     const list = query ? searchFoods(query) : FOODS;
+
     if (category === "all") return list;
+
     return list.filter((food) => food.category === category);
   }, [category, query]);
 
@@ -57,6 +63,8 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
     setPicked(null);
     setCustomOpen(false);
     setMeal(defaultMealForNow());
+    setSaving(false);
+    setSaveError(false);
   }
 
   function pick(food: Food) {
@@ -65,13 +73,66 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
     setCustomOpen(false);
   }
 
-  function confirm() {
-    if (!picked) return;
+  async function saveSelectedDay() {
+    const state = useCalorieStore.getState();
+    const date = state.selectedDate;
+    const day = state.days[date];
+
+    if (!day) return;
+
+    await saveDay(day);
+  }
+
+  async function confirm() {
+    if (!picked || saving) return;
+
     const entry = entryFromFood(picked.id, grams, meal);
+
     if (!entry) return;
-    addEntry(entry);
-    onOpenChange(false);
-    reset();
+
+    setSaving(true);
+    setSaveError(false);
+
+    try {
+      addEntry(entry);
+      await Promise.resolve();
+
+      await saveSelectedDay();
+
+      onOpenChange(false);
+      reset();
+    } catch {
+      setSaveError(true);
+      setSaving(false);
+    }
+  }
+
+  async function saveCustomEntry(entry: {
+    name: string;
+    meal: MealSlot;
+    grams: number;
+    kcal: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+  }) {
+    if (saving) return;
+
+    setSaving(true);
+    setSaveError(false);
+
+    try {
+      addEntry(entry);
+      await Promise.resolve();
+
+      await saveSelectedDay();
+
+      reset();
+      onOpenChange(false);
+    } catch {
+      setSaveError(true);
+      setSaving(false);
+    }
   }
 
   return (
@@ -84,12 +145,19 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
     >
       <Drawer.Portal>
         <Drawer.Overlay className="fixed inset-0 z-40 bg-ink/35" />
+
         <Drawer.Content className="drawer-panel fixed inset-x-0 bottom-0 z-50 flex flex-col rounded-t-xl bg-bg outline-none">
           <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-line" />
+
           <div className="flex items-center justify-between px-5 pb-2 pt-3">
             <Drawer.Title className="text-base font-semibold">
-              {picked ? picked.name : customOpen ? "غذای دلخواه" : "افزودن غذا"}
+              {picked
+                ? picked.name
+                : customOpen
+                  ? "غذای دلخواه"
+                  : "افزودن غذا"}
             </Drawer.Title>
+
             <button
               type="button"
               className="grid size-11 place-items-center rounded-md text-muted hover:bg-surface-2 hover:text-ink"
@@ -105,27 +173,28 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
               food={picked}
               grams={grams}
               meal={meal}
+              saving={saving}
+              saveError={saveError}
               onGrams={setGrams}
               onMeal={setMeal}
               onBack={() => setPicked(null)}
-              onConfirm={confirm}
+              onConfirm={() => void confirm()}
             />
           ) : customOpen ? (
             <CustomFood
               meal={meal}
+              saving={saving}
+              saveError={saveError}
               onMeal={setMeal}
               onBack={() => setCustomOpen(false)}
-              onSave={(entry) => {
-                addEntry(entry);
-                reset();
-                onOpenChange(false);
-              }}
+              onSave={(entry) => void saveCustomEntry(entry)}
             />
           ) : (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="px-5">
                 <div className="relative">
                   <Search className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-subtle" />
+
                   <Input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -134,6 +203,7 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
                     autoFocus
                   />
                 </div>
+
                 <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                   <Chip
                     active={category === "all"}
@@ -141,6 +211,7 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
                   >
                     همه
                   </Chip>
+
                   {CATEGORIES.map((key) => (
                     <Chip
                       key={key}
@@ -159,6 +230,7 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
                     <h3 className="mb-2 text-xs font-medium text-muted">
                       اخیراً
                     </h3>
+
                     <div className="flex flex-wrap gap-2">
                       {recent.map((food) => (
                         <button
@@ -185,6 +257,7 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
                 <ul className="space-y-1.5">
                   {results.map((food) => {
                     const macros = scaleMacros(food, food.servingGrams);
+
                     return (
                       <li key={food.id}>
                         <button
@@ -196,10 +269,13 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
                             <span className="block text-sm font-medium">
                               {food.name}
                             </span>
+
                             <span className="block text-xs text-muted">
-                              {food.servingLabel} · {toFa(food.servingGrams)} گرم
+                              {food.servingLabel} ·{" "}
+                              {toFa(food.servingGrams)} گرم
                             </span>
                           </span>
+
                           <span className="tabular-nums text-sm font-medium text-accent">
                             {toFa(macros.kcal)}
                           </span>
@@ -207,6 +283,7 @@ export function AddFoodSheet({ open, onOpenChange }: Props) {
                       </li>
                     );
                   })}
+
                   {results.length === 0 ? (
                     <li className="py-10 text-center text-sm text-muted">
                       چیزی پیدا نشد. می‌توانی کالری را دستی وارد کنی.
@@ -248,6 +325,8 @@ function FoodDetail({
   food,
   grams,
   meal,
+  saving,
+  saveError,
   onGrams,
   onMeal,
   onBack,
@@ -256,13 +335,16 @@ function FoodDetail({
   food: Food;
   grams: number;
   meal: MealSlot;
+  saving: boolean;
+  saveError: boolean;
   onGrams: (n: number) => void;
   onMeal: (m: MealSlot) => void;
   onBack: () => void;
   onConfirm: () => void;
 }) {
   const macros = scaleMacros(food, grams);
-  const servings = food.servingGrams > 0 ? grams / food.servingGrams : 1;
+  const servings =
+    food.servingGrams > 0 ? grams / food.servingGrams : 1;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col px-5 pb-6">
@@ -273,15 +355,20 @@ function FoodDetail({
       >
         بازگشت به فهرست
       </button>
+
       <p className="mt-3 text-sm text-muted">
         {food.servingLabel} ≈ {toFa(food.servingGrams)} گرم
       </p>
 
       <div className="mt-5 rounded-xl bg-surface p-4 shadow-[var(--shadow-border)]">
-        <p className="text-center text-xs text-muted">کالری این وعده</p>
+        <p className="text-center text-xs text-muted">
+          کالری این وعده
+        </p>
+
         <p className="mt-1 text-center font-semibold tabular-nums text-3xl">
           {toFa(macros.kcal)}
         </p>
+
         <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs text-muted">
           <MacroStat label="پروتئین" value={macros.protein} />
           <MacroStat label="کربوهیدرات" value={macros.carbs} />
@@ -295,20 +382,27 @@ function FoodDetail({
           className="grid size-11 place-items-center rounded-full bg-surface-2"
           onClick={() => onGrams(Math.max(5, grams - 10))}
           aria-label="کاهش مقدار"
+          disabled={saving}
         >
           <Minus className="size-4" />
         </button>
+
         <div className="min-w-28 text-center">
-          <p className="font-semibold tabular-nums text-xl">{toFa(grams)} گرم</p>
+          <p className="font-semibold tabular-nums text-xl">
+            {toFa(grams)} گرم
+          </p>
+
           <p className="text-xs text-muted">
             {toFa(servings, 1)} × {food.servingLabel}
           </p>
         </div>
+
         <button
           type="button"
           className="grid size-11 place-items-center rounded-full bg-surface-2"
           onClick={() => onGrams(grams + 10)}
           aria-label="افزایش مقدار"
+          disabled={saving}
         >
           <Plus className="size-4" />
         </button>
@@ -319,15 +413,23 @@ function FoodDetail({
           <button
             key={mult}
             type="button"
-            onClick={() => onGrams(Math.round(food.servingGrams * mult))}
+            onClick={() =>
+              onGrams(Math.round(food.servingGrams * mult))
+            }
             className="h-9 rounded-full bg-surface-2 px-3 text-sm"
+            disabled={saving}
           >
-            {mult === 0.5 ? "نیم پرس" : mult === 1 ? "یک پرس" : "دو پرس"}
+            {mult === 0.5
+              ? "نیم پرس"
+              : mult === 1
+                ? "یک پرس"
+                : "دو پرس"}
           </button>
         ))}
       </div>
 
       <p className="mt-6 mb-2 text-sm font-medium">وعده</p>
+
       <div className="grid grid-cols-4 gap-1 rounded-lg bg-surface-2 p-1">
         {MEALS.map((item) => (
           <button
@@ -339,23 +441,44 @@ function FoodDetail({
                 ? "bg-surface text-ink shadow-[var(--shadow-border)]"
                 : "text-muted"
             }`}
+            disabled={saving}
           >
             {item.label}
           </button>
         ))}
       </div>
 
-      <Button className="mt-auto w-full" size="lg" onClick={onConfirm}>
-        افزودن به روز
+      {saveError ? (
+        <p className="mt-3 text-center text-sm text-red-500">
+          ذخیره غذا انجام نشد. اتصال به سرور را بررسی کنید.
+        </p>
+      ) : null}
+
+      <Button
+        className="mt-auto w-full"
+        size="lg"
+        onClick={onConfirm}
+        disabled={saving}
+      >
+        {saving ? "در حال ذخیره..." : "افزودن به روز"}
       </Button>
     </div>
   );
 }
 
-function MacroStat({ label, value }: { label: string; value: number }) {
+function MacroStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
   return (
     <div>
-      <p className="tabular-nums font-medium text-ink">{toFa(value, 1)} گ</p>
+      <p className="tabular-nums font-medium text-ink">
+        {toFa(value, 1)} گ
+      </p>
+
       <p>{label}</p>
     </div>
   );
@@ -363,11 +486,15 @@ function MacroStat({ label, value }: { label: string; value: number }) {
 
 function CustomFood({
   meal,
+  saving,
+  saveError,
   onMeal,
   onBack,
   onSave,
 }: {
   meal: MealSlot;
+  saving: boolean;
+  saveError: boolean;
   onMeal: (m: MealSlot) => void;
   onBack: () => void;
   onSave: (entry: {
@@ -391,8 +518,17 @@ function CustomFood({
       className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-6"
       onSubmit={(e) => {
         e.preventDefault();
+
         const kcalN = Number(kcal);
-        if (!name.trim() || !Number.isFinite(kcalN) || kcalN < 0) return;
+
+        if (
+          !name.trim() ||
+          !Number.isFinite(kcalN) ||
+          kcalN < 0
+        ) {
+          return;
+        }
+
         onSave({
           name: name.trim(),
           meal,
@@ -408,15 +544,18 @@ function CustomFood({
         type="button"
         onClick={onBack}
         className="self-start text-sm text-muted hover:text-ink"
+        disabled={saving}
       >
         بازگشت
       </button>
+
       <Input
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="نام غذا"
         required
       />
+
       <Input
         value={kcal}
         onChange={(e) => setKcal(e.target.value)}
@@ -424,6 +563,7 @@ function CustomFood({
         placeholder="کالری"
         required
       />
+
       <div className="grid grid-cols-3 gap-2">
         <Input
           value={protein}
@@ -431,12 +571,14 @@ function CustomFood({
           inputMode="decimal"
           placeholder="پروتئین"
         />
+
         <Input
           value={carbs}
           onChange={(e) => setCarbs(e.target.value)}
           inputMode="decimal"
           placeholder="کربوهیدرات"
         />
+
         <Input
           value={fat}
           onChange={(e) => setFat(e.target.value)}
@@ -444,6 +586,7 @@ function CustomFood({
           placeholder="چربی"
         />
       </div>
+
       <div className="grid grid-cols-4 gap-1 rounded-lg bg-surface-2 p-1">
         {MEALS.map((item) => (
           <button
@@ -455,13 +598,26 @@ function CustomFood({
                 ? "bg-surface text-ink shadow-[var(--shadow-border)]"
                 : "text-muted"
             }`}
+            disabled={saving}
           >
             {item.label}
           </button>
         ))}
       </div>
-      <Button className="mt-auto w-full" size="lg" type="submit">
-        ثبت
+
+      {saveError ? (
+        <p className="text-center text-sm text-red-500">
+          ذخیره غذا انجام نشد. اتصال به سرور را بررسی کنید.
+        </p>
+      ) : null}
+
+      <Button
+        className="mt-auto w-full"
+        size="lg"
+        type="submit"
+        disabled={saving}
+      >
+        {saving ? "در حال ذخیره..." : "ثبت"}
       </Button>
     </form>
   );

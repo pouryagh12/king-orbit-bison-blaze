@@ -1,11 +1,14 @@
-﻿const API_BASE = "/api";
+﻿import type { MealSlot } from "./dates";
+import type { Activity, Goal, Sex } from "./nutrition";
+
+const API_BASE = "/api";
 
 type ApiError = {
   ok: false;
   error: string;
 };
 
-async function request<T extends object> (
+async function request<T extends object>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
@@ -46,6 +49,58 @@ export type MeResponse = {
   user: ApiUser | null;
 };
 
+export type ApiProfile = {
+  name: string;
+  sex: Sex;
+  age: number;
+  heightCm: number;
+  weightKg: number;
+  activity: Activity;
+  goal: Goal;
+  calorieGoal: number;
+  proteinGoal: number;
+  carbsGoal: number;
+  fatGoal: number;
+};
+
+export type ApiFoodEntry = {
+  id: string;
+  foodId?: string;
+  name: string;
+  meal: MealSlot;
+  grams: number;
+  kcal: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  createdAt: number;
+};
+
+export type ApiDay = {
+  date: string;
+  entries: ApiFoodEntry[];
+  water: number;
+};
+
+export type SyncResponse = {
+  ok: true;
+  user: ApiUser;
+  profile: ApiProfile | null;
+  days: Record<string, ApiDay>;
+  recentFoodIds: string[];
+};
+
+export type ProfileUpdateResponse = {
+  ok: true;
+};
+
+export type DaySaveResponse = {
+  ok: true;
+  date: string;
+  water: number;
+  entriesCount: number;
+};
+
 export async function register(
   name: string,
   email: string,
@@ -82,4 +137,26 @@ export async function logout(): Promise<{ ok: true }> {
 
 export async function getMe(): Promise<MeResponse> {
   return request<MeResponse>("/auth/me.php");
+}
+
+export async function syncData(): Promise<SyncResponse> {
+  return request<SyncResponse>("/sync.php");
+}
+
+export async function updateProfile(
+  profile: ApiProfile,
+): Promise<ProfileUpdateResponse> {
+  return request<ProfileUpdateResponse>("/profile/update.php", {
+    method: "POST",
+    body: JSON.stringify(profile),
+  });
+}
+
+export async function saveDay(
+  day: ApiDay,
+): Promise<DaySaveResponse> {
+  return request<DaySaveResponse>("/days/save.php", {
+    method: "POST",
+    body: JSON.stringify(day),
+  });
 }

@@ -27,8 +27,8 @@ function hasGlobbedMigrations(root: string): boolean {
  * on import.
  *
  * Vite awaiting the hook puts this on time-to-first-render, so an app with no
- * migrations — no schema to apply — skips it entirely rather than paying for a
- * PGLite instance it never queries.
+ * migrations — no schema to apply — skips it entirely rather than paying for
+ * a PGLite instance it never queries.
  */
 function pgliteBootstrapPlugin(): Plugin {
   return {
@@ -73,10 +73,12 @@ function authPopupPlugin(): Plugin {
         try {
           const rawUrl = req.url ?? "";
           const pathOnly = rawUrl.split("?", 1)[0] ?? "";
+
           if (pathOnly !== "/auth/popup") {
             next();
             return;
           }
+
           if ((req.method ?? "GET").toUpperCase() !== "GET") {
             res.statusCode = 405;
             res.setHeader("content-type", "text/plain; charset=utf-8");
@@ -85,52 +87,73 @@ function authPopupPlugin(): Plugin {
           }
 
           const host = String(
-            req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost:8080",
+            req.headers["x-forwarded-host"] ??
+              req.headers.host ??
+              "localhost:8080",
           );
+
           const proto = String(
             req.headers["x-forwarded-proto"] ??
-              ((req.socket as { encrypted?: boolean } | undefined)?.encrypted ? "https" : "http"),
+              ((req.socket as { encrypted?: boolean } | undefined)?.encrypted
+                ? "https"
+                : "http"),
           );
+
           const requestHeaders = new Headers();
+
           for (const [key, value] of Object.entries(req.headers)) {
             if (value === undefined) continue;
+
             if (Array.isArray(value)) {
-              for (const v of value) requestHeaders.append(key, v);
+              for (const v of value) {
+                requestHeaders.append(key, v);
+              }
             } else {
               requestHeaders.set(key, value);
             }
           }
+
           // Ensure Host is the public preview host so Better Auth's dynamic
           // baseURL / redirect_uri match the popup origin.
-          if (!requestHeaders.has("host")) requestHeaders.set("host", host);
+          if (!requestHeaders.has("host")) {
+            requestHeaders.set("host", host);
+          }
 
           const request = new Request(`${proto}://${host}${rawUrl}`, {
             method: "GET",
             headers: requestHeaders,
           });
 
-          const mod = (await server.ssrLoadModule("/src/lib/auth/popup.server.ts")) as {
+          const mod = (await server.ssrLoadModule(
+            "/src/lib/auth/popup.server.ts",
+          )) as {
             handleAuthPopupRequest: (req: Request) => Promise<Response>;
           };
+
           const response = await mod.handleAuthPopupRequest(request);
 
           res.statusCode = response.status;
+
           // Preserve multiple Set-Cookie headers (OAuth state + session).
           const setCookies =
             typeof response.headers.getSetCookie === "function"
               ? response.headers.getSetCookie()
               : [];
+
           response.headers.forEach((value, key) => {
             if (key.toLowerCase() === "set-cookie") return;
             res.setHeader(key, value);
           });
+
           for (const cookie of setCookies) {
             res.appendHeader("set-cookie", cookie);
           }
+
           const body = Buffer.from(await response.arrayBuffer());
           res.end(body);
         } catch (err) {
           console.error("[app-builder] /auth/popup handler failed:", err);
+
           if (!res.headersSent) {
             res.statusCode = 500;
             res.setHeader("content-type", "text/plain; charset=utf-8");
@@ -150,27 +173,48 @@ export default defineConfig(({ command, isPreview }) => ({
     host: "0.0.0.0",
     port: 8080,
     strictPort: true,
+
+    // Local PHP API server runs on port 8000.
+    // Requests from the React app to /api/* are forwarded there.
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+    },
   },
+
   preview: {
     host: "127.0.0.1",
     port: 8081,
     strictPort: true,
   },
-  resolve: { tsconfigPaths: true },
+
+  resolve: {
+    tsconfigPaths: true,
+  },
+
   plugins: [
     pgliteBootstrapPlugin(),
+
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     authPopupPlugin(),
+
     // Dev-only /__app-env, read by scripts/check-auth-invariant.mjs.
     appEnvPlugin(),
+
     // PWA head + ?install=1 tutorial page; runs before Start/Nitro.
     grokPwaPlugin(),
+
     tailwindcss(),
+
     tanstackStart(),
+
     ...(command === "build" || isPreview
       ? [
           nitro({
             preset: "vercel",
+
             // Auto-registers server/middleware/* (the PWA install page +
             // manifest + head-tag middleware). Nitro v3 defaults serverDir to
             // false, so removing this silently unwires /?install=1 on deploys.
@@ -178,6 +222,7 @@ export default defineConfig(({ command, isPreview }) => ({
           }),
         ]
       : []),
+
     viteReact(),
   ],
 }));
